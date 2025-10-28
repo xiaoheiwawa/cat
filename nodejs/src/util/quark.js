@@ -1,7 +1,10 @@
+//jiami-mark
 import req from './req.js';
 import chunkStream  from './chunk.js';
 import CryptoJS from 'crypto-js';
-import { formatPlayUrl, conversion, lcs, findBestLCS, delay} from './misc.js';
+import { findBestLCS, delay} from './misc.js';
+import {videosHandle} from "./utils.js";
+import {isQuarkLink} from "./linkDetect.js";
 
 export function getShareData(url) {
     let regex = /https:\/\/pan\.quark\.cn\/s\/([^\\|#/]+)/;
@@ -32,12 +35,12 @@ const shareTokenCache = {};
 const saveDirName = 'CatVodOpen';
 let saveDirId = null;
 
-export async function initQuark(db, cfg) {
-    if (cookie) return;
-    localDb = db;
+export async function initQuark(inReq) {
+    localDb = inReq.server.db;
+    const cfg = inReq.server.config.quark
     cookie = cfg.cookie;
     ckey = CryptoJS.enc.Hex.stringify(CryptoJS.MD5(cfg.cookie)).toString();
-    const localCfg = await db.getObjectDefault(`/quark`, {});
+    const localCfg = await localDb.getObjectDefault(`/quark`, {});
     if (localCfg[ckey]) {
         cookie = localCfg[ckey];
     }
@@ -149,7 +152,7 @@ export async function getFilesByShareUrl(shareInfo) {
     const videos = [];
     const subtitles = [];
     const listFile = async function (shareId, folderId, page) {
-        const prePage = 200;
+        const prePage = 100;
         page = page || 1;
         const listData = await api(`share/sharepage/detail?${pr}&pwd_id=${shareId}&stoken=${encodeURIComponent(shareTokenCache[shareId].stoken)}&pdir_fid=${folderId}&force=0&_page=${page}&_size=${prePage}&_sort=file_type:asc,file_name:asc`, {}, {}, 'get');
         if (!listData.data) return [];
@@ -273,23 +276,22 @@ export async function getDownload(shareId, stoken, fileId, fileToken, clean) {
 }
 
 export async function detail(shareUrl) {
-    if (shareUrl.includes('https://pan.quark.cn')) {
+    if (isQuarkLink('https://pan.quark.cn')) {
         const shareData = getShareData(shareUrl);
-        const result = {};
         if (shareData) {
-            const videos = await getFilesByShareUrl(shareData);
-            if (videos.length > 0) {
-                result.from = '夸克网盘-' + shareData.shareId;
-                result.url = videos
-                        .map((v) => {
-                            const ids = [shareData.shareId, v.stoken, v.fid, v.share_fid_token, v.subtitle ? v.subtitle.fid : '', v.subtitle ? v.subtitle.share_fid_token : ''];
-                            const size = conversion(v.size);
-                            return formatPlayUrl('', ` ${v.file_name.replace(/.[^.]+$/,'')}  [${size}]`) + '$' + ids.join('*');
-                        })
-                        .join('#')
-            }
+            let videos = await getFilesByShareUrl(shareData);
+            videos = videos.map(v => {
+                const ids = [shareData.shareId, v.stoken, v.fid, v.share_fid_token, v.subtitle ? v.subtitle.fid : '', v.subtitle ? v.subtitle.share_fid_token : ''];
+                return {
+                    vod_id: ids.join('*'),
+                    vod_name: v.file_name,
+                    vod_size: v.size,
+                }
+            })
+            return videosHandle(getPanName('quark') + '-' + shareData.shareId, videos)
+        } else {
+            return {}
         }
-        return result;
     }
 }
 
@@ -297,6 +299,7 @@ const quarkTranscodingCache = {};
 const quarkDownloadingCache = {};
 
 export async function proxy(inReq, outResp) {
+    await initQuark(inReq)
     const site = inReq.params.site;
     const what = inReq.params.what;
     const shareId = inReq.params.shareId;
@@ -339,11 +342,12 @@ export async function proxy(inReq, outResp) {
 }
 
 export async function play(inReq, outResp) {
+    await initQuark(inReq)
     const flag = inReq.body.flag;
     const id = inReq.body.id;
     const ids = id.split('*');
     let idx = 0;
-    if (flag.startsWith('夸克网盘')) {
+    if (flag.startsWith(getPanName('quark'))) {
         const transcoding = (await getLiveTranscoding(ids[0], ids[1], ids[2], ids[3])).filter((t) => t.accessable);
         quarkTranscodingCache[ids[2]] = transcoding;
         const urls = [];

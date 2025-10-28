@@ -1,8 +1,10 @@
 import req from './req.js';
 import chunkStream  from './chunk.js';
 import CryptoJS from 'crypto-js';
-import { formatPlayUrl, conversion, lcs, findBestLCS, delay} from './misc.js';
+import { findBestLCS, delay} from './misc.js';
 import axios from "axios";
+import {videosHandle} from "./utils.js";
+import {isUcLink} from "./linkDetect.js";
 
 export const Addition = {
     DeviceID: '07b48aaba8a739356ab8107b5e230ad4',
@@ -57,6 +59,7 @@ let ckey = null;
 const apiUrl = 'https://pc-api.uc.cn/1/clouddrive/';
 export let cookie = '';
 export let tokenDbKey = '';
+export let utDbKey = '';
 
 const shareTokenCache = {};
 const saveDirName = 'CatVodOpen';
@@ -68,6 +71,7 @@ export async function initUC(inReq) {
     cookie = cfg.cookie;
     ckey = CryptoJS.enc.Hex.stringify(CryptoJS.MD5(cfg.cookie)).toString();
     tokenDbKey = CryptoJS.enc.Hex.stringify(CryptoJS.MD5(cfg.token)).toString();
+    utDbKey = CryptoJS.enc.Hex.stringify(CryptoJS.MD5(cfg.ut)).toString();
     const localCfg = await localDb.getObjectDefault(`/uc`, {});
     if (localCfg[ckey]) {
         cookie = localCfg[ckey];
@@ -180,7 +184,7 @@ export async function getFilesByShareUrl(shareInfo) {
     const videos = [];
     const subtitles = [];
     const listFile = async function (shareId, folderId, page) {
-        const prePage = 200;
+        const prePage = 100;
         page = page || 1;
         const listData = await api(`share/sharepage/detail?${pr}&pwd_id=${shareId}&stoken=${encodeURIComponent(shareTokenCache[shareId].stoken)}&pdir_fid=${folderId}&force=0&_page=${page}&_size=${prePage}&_sort=file_type:asc,file_name:asc`, {}, {}, 'get');
         if (!listData.data) return [];
@@ -296,7 +300,7 @@ export async function getDownload(shareId, stoken, fileId, fileToken, clean) {
     }
     const localCfg = await localDb.getObjectDefault(`/uc`, {});
     const token = localCfg[tokenDbKey]
-    console.log('localCfg', localCfg, token)
+    const ut = localCfg[utDbKey]
     if (token) {
         let video = []
         const pathname = '/file';
@@ -321,7 +325,7 @@ export async function getDownload(shareId, stoken, fileId, fileToken, clean) {
                 device_gpu: 'Adreno (TM) 550',
                 activity_rect: '{}',
                 channel: conf.channel,
-                method: "download",
+                method: "streaming",
                 group_by: "source",
                 fid: saveFileIdCaches[fileId],
                 resolution: "low,normal,high,super,2k,4k",
@@ -339,10 +343,16 @@ export async function getDownload(shareId, stoken, fileId, fileToken, clean) {
         }
         let req = await axios.request(config);
         if (req.status === 200) {
-            return req.data.data
+            const videoInfo = req.data.data.video_info.filter((t) => t.accessable)[0]
+            videoInfo.download_url = videoInfo.url
+            return videoInfo
         }
     } else {
-        const down = await api(`file/download?${pr}`, {
+        let url = `file/download?${pr}`
+        if (ut) {
+            url += `&ut=${ut}`
+        }
+        const down = await api(url, {
             fids: [saveFileIdCaches[fileId]],
         });
         if (down.data) {
@@ -353,23 +363,22 @@ export async function getDownload(shareId, stoken, fileId, fileToken, clean) {
 }
 
 export async function detail(shareUrl) {
-    if (shareUrl.includes('https://drive.uc.cn')) {
+    if (isUcLink(shareUrl)) {
         const shareData = getShareData(shareUrl);
-        const result = {};
         if (shareData) {
-            const videos = await getFilesByShareUrl(shareData);
-            if (videos.length > 0) {
-                result.from = 'UC网盘-' + shareData.shareId;
-                result.url = videos
-                        .map((v) => {
-                            const ids = [shareData.shareId, v.stoken, v.fid, v.share_fid_token, v.subtitle ? v.subtitle.fid : '', v.subtitle ? v.subtitle.share_fid_token : ''];
-                            const size = conversion(v.size);
-                            return formatPlayUrl('', ` ${v.file_name.replace(/.[^.]+$/,'')}  [${size}]`) + '$' + ids.join('*');
-                        })
-                        .join('#')
-            }
+            let videos = await getFilesByShareUrl(shareData);
+            videos = videos.map(v => {
+                const ids = [shareData.shareId, v.stoken, v.fid, v.share_fid_token, v.subtitle ? v.subtitle.fid : '', v.subtitle ? v.subtitle.share_fid_token : ''];
+                return {
+                    vod_id: ids.join('*'),
+                    vod_name: v.file_name,
+                    vod_size: v.size,
+                }
+            })
+            return videosHandle(getPanName('uc') + '-' + shareData.shareId, videos)
+        } else {
+            return {}
         }
-        return result;
     }
 }
 
@@ -425,17 +434,22 @@ export async function play(inReq, outResp) {
     const ids = id.split('*');
     await initUC(inReq)
     let idx = 0;
-    if (flag.startsWith('UC网盘')) {
+    if (flag.startsWith(getPanName('uc'))) {
         const transcoding = (await getLiveTranscoding(ids[0], ids[1], ids[2], ids[3])).filter((t) => t.accessable);
         ucTranscodingCache[ids[2]] = transcoding;
         const urls = [];
         const p= ['超清','蓝光','高清','标清','普画','极速'];
         const arr =['4k','2k','super','high','low','normal'];
         const proxyUrl = inReq.server.address().url + inReq.server.prefix + '/proxy/uc';
-        urls.push('代理');
-        urls.push(`${proxyUrl}/src/down/${ids[0]}/${encodeURIComponent(ids[1])}*${ids[2]}*${ids[3]}/.bin`);
-        urls.push('原画');
-        urls.push(`${proxyUrl}/src/redirect/${ids[0]}/${encodeURIComponent(ids[1])}*${ids[2]}*${ids[3]}/.bin`);
+        const localCfg = await localDb.getObjectDefault(`/uc`, {});
+        const token = localCfg[tokenDbKey]
+        const proxyVideo = ['代理', `${proxyUrl}/src/down/${ids[0]}/${encodeURIComponent(ids[1])}*${ids[2]}*${ids[3]}/.bin`]
+        const rawVideo = ['原画', `${proxyUrl}/src/redirect/${ids[0]}/${encodeURIComponent(ids[1])}*${ids[2]}*${ids[3]}/.bin`]
+        if (token) {
+            urls.push(...rawVideo, ...proxyVideo)
+        } else {
+            urls.push(...proxyVideo, ...rawVideo)
+        }
         const result = {
             parse: 0,
             url: urls,
@@ -446,6 +460,9 @@ export async function play(inReq, outResp) {
                 baseHeader,
             ),
         };
+        if (token) {
+            result.header = undefined
+        }
         if (ids[3]) {
             result.extra = {
                 subt: `${proxyUrl}/src/subt/${ids[0]}/${encodeURIComponent(ids[1])}*${ids[4]}*${ids[5]}/.bin`,

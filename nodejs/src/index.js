@@ -4,6 +4,7 @@ import { JsonDB, Config } from 'node-json-db';
 import axios from 'axios';
 import website from "./website/index.js";
 import {getIPAddress} from "./util/network.js";
+import {getCache as getPansCache} from "./website/pans.js";
 
 let server = null;
 
@@ -61,8 +62,23 @@ export async function start(config) {
     server.db = new JsonDB(new Config((process.env['NODE_PATH'] || '.') + '/db.json', true, true, '/', true));
     server.register(router);
     server.register(website, { prefix: '/website' });
-    // 注意 一定要监听ipv4地址 build后 app中使用时 端口使用0让系统自动分配可用端口
-    server.listen({ port: process.env['DEV_HTTP_PORT'] || 0, host: '0.0.0.0' });
+    globalThis.Pans = await getPansCache(server)
+    globalThis.getPanName = (key) => globalThis.Pans.find(pan => pan.key === key)?.name
+    globalThis.getPanEnabled = (key) => globalThis.Pans.find(pan => pan.key === key)?.enable
+    const startServer = (port) => {
+        server.listen({ port: process.env['DEV_HTTP_PORT'] || port, host: '0.0.0.0' }, (err, address) => {
+            if (err) {
+                console.error(err);
+                if (err.code === 'EADDRINUSE') {
+                    console.log(`Port ${port} is already in use. Trying next available port...`);
+                    startServer(port + 1);
+                }
+            } else {
+                console.log(`Server listening on ${address}`);
+            }
+        });
+    }
+    startServer(9988)
 }
 
 /**

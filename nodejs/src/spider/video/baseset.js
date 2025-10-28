@@ -15,11 +15,12 @@ async function init(inReq, outResp) {
 
 
 async function home(e, t) {
+  const url = `${e.server.address().url}/website`
   return {
     class: [
       {
         type_id: 'setting',
-        type_name: '配置'
+        type_name: url
       }
     ]
   }
@@ -36,7 +37,7 @@ async function category(e, t) {
     limit: 1,
     total: 1,
     list: [{
-      vod_id: 'website',
+      vod_id: String(Math.random()),
       vod_name: "扫码配置",
       vod_pic: proxyUrl + '/' + base64Encode(`${e.server.address().url}/website`)
     }]

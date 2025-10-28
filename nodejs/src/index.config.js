@@ -1,26 +1,40 @@
 export default {
     ali: {
-        token: 'token',
+        token: '',
         token280: 'token280',
     },
     quark: {
-        cookie: 'cookie'
+        cookie: ''
     },
     uc: {
         cookie: 'cookie',
-        token: 'token'
+        token: 'token',
+        ut: 'ut'
     },
     y115: {
-        cookie: 'y115'
+        cookie: ''
     },
-    kunyu77: {
-        testcfg: {
-            bbbb: 'aaaaa',
-        },
+    muou: {
+        url: '',
     },
-    ffm3u8: {
-        url: 'https://cj.ffzyapi.com/api.php/provide/vod/from/ffm3u8',
-        categories: ['国产剧', '香港剧', '韩国剧', '欧美剧', '台湾剧', '日本剧', '海外剧', '泰国剧', '短剧', '动作片', '喜剧片', '爱情片', '科幻片', '恐怖片', '剧情片', '战争片', '动漫片', '大陆综艺', '港台综艺', '日韩综艺', '欧美综艺', '国产动漫', '日韩动漫', '欧美动漫', '港台动漫', '海外动漫', '记录片'],
+    wogg: {
+        url: '',
+    },
+    leijing: {
+        url: '',
+    },
+    tgsou: {
+        tgPic: false,
+        count: 0,
+        url: '',
+        channelUsername: '',
+    },
+    tgchannel: {},
+    sites: {
+        list: []
+    },
+    pans: {
+        list: [],
     },
     alist: [
         {

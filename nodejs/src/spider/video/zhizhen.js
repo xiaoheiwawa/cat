@@ -2,7 +2,7 @@ import req from '../../util/req.js';
 import { load } from 'cheerio';
 import { ua, init ,detail as _detail ,proxy ,play ,test } from '../../util/pan.js';
 
-let url = 'https://tv.yydsys.top';
+let url = 'https://mihdr.top';
 async function request(reqUrl) {
     const resp = await req.get(reqUrl, {
         headers: {
@@ -14,13 +14,29 @@ async function request(reqUrl) {
 
 async function home(_inReq, _outResp) {
     let fiters = '';
-    let classes = [{'type_id':'1','type_name':'电影'},{'type_id':'2','type_name':'剧集'},{'type_id':'4','type_name':'动漫'},{'type_id':'3','type_name':'综艺'},{'type_id':'5','type_name':'短剧'},{'type_id':'20','type_name':'纪录片'}];
+    let classes = [{'type_id':'26','type_name':'严选'},{'type_id':'1','type_name':'电影'},{'type_id':'2','type_name':'剧集'},{'type_id':'3','type_name':'动漫'},{'type_id':'4','type_name':'综艺'},{'type_id':'5','type_name':'短剧'},{'type_id':'24','type_name':'老剧计划'}];
     let filterObj = {};
     return({
         class: classes,
         filters: filterObj,
     });
     
+}
+
+function fixImgUrl(imgUrl) {
+    if (imgUrl.startsWith('/img.php?url=')) {
+        return imgUrl.substr(13);
+    }
+    return imgUrl;
+}
+
+
+function getFilterUrlPart(extend, part) {
+    let result = '';
+    if (extend[part]) {
+        result = '/' + part + '/' + extend[part];
+    }
+    return result;
 }
 
 async function category(inReq, _outResp) {
@@ -139,8 +155,8 @@ async function search(inReq, _outResp) {
 
 export default {
     meta: {
-        key: 'duoduo',
-        name: '多多',
+        key: 'zhizhen',
+        name: '至臻',
         type: 3,
     },
     api: async (fastify) => {

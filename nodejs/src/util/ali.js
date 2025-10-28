@@ -1,8 +1,10 @@
 import dayjs from 'dayjs';
 import CryptoJS from 'crypto-js';
-import { IOS_UA, formatPlayUrl, conversion, isEmpty, lcs, findBestLCS, delay} from './misc.js';
+import { IOS_UA, findBestLCS, delay} from './misc.js';
 import req from './req.js';
 import * as HLS from 'hls-parser';
+import {videosHandle} from "./utils.js";
+import {isAliLink} from "./linkDetect.js";
 
 // https://www.alipan.com/s/8stgXuDFsLy
 export function getShareData(url) {
@@ -20,32 +22,34 @@ export function getShareData(url) {
 const apiUrl = 'https://api.aliyundrive.com';
 const openApiUrl = 'https://open.aliyundrive.com/adrive/v1.0';
 
-let config = null;
 const shareTokenCache = {};
 let user = {};
 let oauth = {};
-let oriCfg = {};
 let localDb = null;
-const localTokenPath = '/alipan/tokens';
+const localTokenPath = '/ali';
 const saveDirName = 'CatVodOpen';
 let saveDirId = null;
+let tokenKey = ''
+let token280Key = ''
+let token = ''
+let token280 = ''
 
 const baseHeaders = {
     'User-Agent': IOS_UA,
     Referer: 'https://www.aliyundrive.com/',
 };
 
-export async function initAli(db, cfg) {
-    if (config) return;
-    localDb = db;
-    oriCfg = cfg;
-    config = cfg;
-    const localCfg = await db.getObjectDefault(localTokenPath, {});
-    if (localCfg[oriCfg.token]) {
-        config.token = localCfg[oriCfg.token];
+export async function initAli(inReq) {
+    localDb = inReq.server.db;
+    const cfg = inReq.server.config.ali;
+    tokenKey = CryptoJS.enc.Hex.stringify(CryptoJS.MD5(cfg.token)).toString();
+    token280Key = CryptoJS.enc.Hex.stringify(CryptoJS.MD5(cfg.token280)).toString();
+    const localCfg = await localDb.getObjectDefault(localTokenPath, {});
+    if (localCfg[tokenKey]) {
+        token = localCfg[tokenKey];
     }
-    if (localCfg[oriCfg.token280]) {
-        config.token280 = localCfg[oriCfg.token280];
+    if (localCfg[token280Key]) {
+        token280 = localCfg[token280Key];
     }
 }
 
@@ -102,7 +106,7 @@ async function login() {
             .post(
                 'https://auth.aliyundrive.com/v2/account/token',
                 {
-                    refresh_token: config.token,
+                    refresh_token: token,
                     grant_type: 'refresh_token',
                 },
                 { headers: baseHeaders }
@@ -114,8 +118,8 @@ async function login() {
             user = loginResp.data;
             user.expire_time = dayjs(loginResp.data.expire_time).unix();
             user.auth = `${user.token_type} ${user.access_token}`;
-            config.token = user.refresh_token;
-            await localDb.push(localTokenPath + '/' + oriCfg.token, user.refresh_token);
+            token = user.refresh_token;
+            await localDb.push(localTokenPath + '/' + tokenKey, user.refresh_token);
         }
     }
 }
@@ -124,16 +128,16 @@ async function login() {
 async function openAuth() {
     if (!oauth.access_token || oauth.expire_time - dayjs().unix() < 120) {
         let openResp = await req.post('https://aliyundrive-oauth.messense.me/oauth/access_token',{
-            grant_type: 'refresh_token', 
-            refresh_token: config.token280,
+            grant_type: 'refresh_token',
+            refresh_token: token280,
         }, {
             headers: baseHeaders,
         },).catch((err) => {return err.response || { status: 500, data: {} };});
 
         if (openResp.status != 200) {
-            openResp = await req.post('https://api.xhofe.top/alist/ali_open/token',{
-                grant_type: 'refresh_token', 
-                refresh_token: config.token280,
+            openResp = await req.post('https://api.nn.ci/alist/ali_open/token',{
+                grant_type: 'refresh_token',
+                refresh_token: token280,
             }, {
                 headers: baseHeaders,
             },).catch((err) => {return err.response || { status: 500, data: {} };});
@@ -144,8 +148,8 @@ async function openAuth() {
             const info = JSON.parse(CryptoJS.enc.Base64.parse(openResp.data.access_token.split('.')[1]).toString(CryptoJS.enc.Utf8));
             oauth.expire_time = info.exp;
             oauth.auth = `${oauth.token_type} ${oauth.access_token}`;
-            config.token280 = oauth.refresh_token;
-            await localDb.push(localTokenPath + '/' + oriCfg.token280, oauth.refresh_token);
+            token280 = oauth.refresh_token;
+            await localDb.push(localTokenPath + '/' + token280Key, oauth.refresh_token);
         }
     }
 }
@@ -368,30 +372,30 @@ export async function getDownload(shareId, fileId) {
 }
 
 export async function detail(shareUrl) {
-    if (shareUrl.includes('https://www.alipan.com')) {
+    if (isAliLink(shareUrl)) {
         const shareData = getShareData(shareUrl);
-        const result = {};
         if (shareData) {
-            const videos = await getFilesByShareUrl(shareData);
-            if (videos.length > 0) {
-                result.from = '阿里云盘-' + shareData.shareId;
-                result.url = videos
-                        .map((v) => {
-                            const ids = [v.share_id, v.file_id, v.subtitle ? v.subtitle.file_id : ''];
-                            const size = conversion(v.size);
-                            return formatPlayUrl('', ` ${v.name.replace(/.[^.]+$/,'')}  [${size}]`) + '$' + ids.join('*');
-                        })
-                        .join('#')
-            }
+            let videos = await getFilesByShareUrl(shareData);
+            videos = videos.map(v => {
+                const ids = [v.share_id, v.file_id, v.subtitle ? v.subtitle.file_id : ''];
+                return {
+                    vod_id: ids.join('*'),
+                    vod_name: v.name,
+                    vod_size: v.size,
+                }
+            })
+            return videosHandle(getPanName('ali') + '-' + shareData.shareId, videos)
+        } else {
+            return {}
         }
-        return result;
-    }                
+    }
 }
 
 const aliTranscodingCache = {};
 const aliDownloadingCache = {};
 
 export async function proxy(inReq, outResp) {
+    await initAli(inReq)
     const site = inReq.params.site;
     const what = inReq.params.what;
     const shareId = inReq.params.shareId;
@@ -473,11 +477,12 @@ export async function proxy(inReq, outResp) {
 }
 
 export async function play(inReq, outResp) {
+    await initAli(inReq)
     const flag = inReq.body.flag;
     const id = inReq.body.id;
     const ids = id.split('*');
     let idx = 0;
-    if (flag.startsWith('阿里云盘')) {
+    if (flag.startsWith(getPanName('ali'))) {
         const transcoding = await getLiveTranscoding(ids[0], ids[1]);
         aliTranscodingCache[ids[1]] = transcoding;
         transcoding.sort((a, b) => b.template_width - a.template_width);
